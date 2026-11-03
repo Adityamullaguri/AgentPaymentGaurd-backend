@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./services/seller" },
+    { "path": "./services/gateway" },
+    { "path": "./agents/buyer" }
+  ]
+}

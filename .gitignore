@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local environment files (keep templates tracked)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+npm-debug.log*

@@ -1,6 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import {
+  runBuyerScenario,
+  type BuyerConfig,
+  type BuyerDependencies,
+} from "@agentpay/buyer";
 import express, {
   type Request,
   type RequestHandler,
@@ -63,72 +66,29 @@ export type DemoRunner = (
   signal: AbortSignal,
 ) => Promise<number | null>;
 
-function spawnBuyerScenario(
-  projectRoot: string,
+async function runBuyerInProcess(
   scenario: DemoScenario,
-  onOutput: (line: string) => void,
   signal: AbortSignal,
 ): Promise<number | null> {
-  if (signal.aborted) {
-    return Promise.resolve(null);
-  }
-  const tsxCli = resolve(projectRoot, "node_modules", "tsx", "dist", "cli.mjs");
-  const buyerEntry = resolve(projectRoot, "agents", "buyer", "src", "index.ts");
-  const childEnv: NodeJS.ProcessEnv = {};
-  for (const name of ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"]) {
-    const value = process.env[name];
-    if (value) {
-      childEnv[name] = value;
-    }
-  }
-  for (const name of [
-    "BUYER_AGENT_KEY",
-    "BUYER_AGENT_ID",
-    "SELLER_URL",
-    "GATEWAY_URL",
-  ]) {
-    const value = process.env[name];
-    if (value) {
-      childEnv[name] = value;
-    }
-  }
-
-  const child = spawn(
-    process.execPath,
-    [tsxCli, buyerEntry, scenario],
-    { cwd: projectRoot, env: childEnv, shell: false, windowsHide: true },
-  );
-  let pendingOutput = "";
-  const emitOutput = (data: Buffer) => {
-    pendingOutput += data.toString();
-    const lines = pendingOutput.split(/\r?\n/);
-    pendingOutput = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line) {
-        onOutput(line);
-      }
-    }
+  if (signal.aborted) return null;
+  const config: BuyerConfig = {
+    sellerUrl: process.env.SELLER_URL?.replace(/\/+$/, "") || "http://localhost:4001",
+    gatewayUrl: process.env.GATEWAY_URL?.replace(/\/+$/, "") || "http://localhost:4002",
+    agentId: process.env.BUYER_AGENT_ID?.trim() || "agent_buyer_1",
+    agentKey: process.env.BUYER_AGENT_KEY?.trim() || "",
   };
-  child.stdout.on("data", emitOutput);
-  child.stderr.on("data", emitOutput);
-  return new Promise<number | null>((resolveExit, reject) => {
-    const stop = () => {
-      child.kill();
-    };
-    const cleanup = () => signal.removeEventListener("abort", stop);
-    signal.addEventListener("abort", stop, { once: true });
-    child.once("error", (error) => {
-      cleanup();
-      reject(error);
-    });
-    child.once("close", (code) => {
-      cleanup();
-      if (pendingOutput) {
-        onOutput(pendingOutput);
-      }
-      resolveExit(code);
-    });
-  });
+  if (!config.agentKey) {
+    throw new Error("BUYER_AGENT_KEY must be configured for demo scenarios");
+  }
+  const dependencies: BuyerDependencies = {
+    fetch,
+    sleep: (milliseconds) =>
+      new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
+    now: Date.now,
+    log: (line) => console.log(`Demo buyer: ${line}`),
+  };
+  const result = await runBuyerScenario(scenario, config, dependencies);
+  return result.stopReason === "SCENARIO_COMPLETED" ? 0 : 1;
 }
 
 interface ApprovalRow {
@@ -1262,8 +1222,11 @@ export function createAdminRouter(dependencies: AdminDependencies): express.Rout
         }
         const runner: DemoRunner =
           demoRunner ??
-          ((name, onOutput, signal) =>
-            spawnBuyerScenario(projectRoot, name, onOutput, signal));
+          (async (name, onOutput, signal) => {
+            const exitCode = await runBuyerInProcess(name, signal);
+            onOutput(`SUMMARY stop_reason=${exitCode === 0 ? "SCENARIO_COMPLETED" : "SCENARIO_FAILED"}`);
+            return exitCode;
+          });
         exitCode = await runner(buyerScenario, (line) => {
           events.publish("demo_status", {
             scenario,

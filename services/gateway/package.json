@@ -8,6 +8,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@agentpay/buyer": "0.1.0",
     "@agentpay/shared": "0.1.0",
     "better-sqlite3": "^11.7.0",
     "dotenv": "^16.4.7",

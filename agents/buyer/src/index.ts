@@ -24,6 +24,7 @@ export interface BuyerDependencies {
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   log: (line: string) => void;
+  signal?: AbortSignal;
   maxPollDurationMs?: number;
   pollIntervalMs?: number;
   retryBaseDelayMs?: number;
@@ -104,7 +105,10 @@ async function requestWithRetry(
   const requestTimeoutMs =
     dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt += 1) {
+    if (dependencies.signal?.aborted) return undefined;
     const controller = new AbortController();
+    const abortRequest = () => controller.abort();
+    dependencies.signal?.addEventListener("abort", abortRequest, { once: true });
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await dependencies.fetch(url, {
@@ -120,7 +124,9 @@ async function requestWithRetry(
       }
     } finally {
       clearTimeout(timeout);
+      dependencies.signal?.removeEventListener("abort", abortRequest);
     }
+    if (dependencies.signal?.aborted) return undefined;
     await dependencies.sleep(retryBaseDelayMs * 2 ** attempt);
   }
   return undefined;
@@ -343,6 +349,10 @@ export async function runBuyerScenario(
         : Array.from({ length: 50 }, () => "market-prices");
 
   for (const resource of resources) {
+    if (dependencies.signal?.aborted) {
+      stopReason = "SCENARIO_CANCELLED";
+      break;
+    }
     const result = await buyResource(resource, config, dependencies);
     centsSpent += result.paidCents;
     if (result.delivered) {

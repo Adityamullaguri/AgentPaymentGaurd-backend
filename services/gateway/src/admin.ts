@@ -83,9 +83,17 @@ async function runBuyerInProcess(
   const dependencies: BuyerDependencies = {
     fetch,
     sleep: (milliseconds) =>
-      new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
+      new Promise((resolveSleep) => {
+        const timer = setTimeout(resolveSleep, milliseconds);
+        const cancel = () => {
+          clearTimeout(timer);
+          resolveSleep();
+        };
+        signal.addEventListener("abort", cancel, { once: true });
+      }),
     now: Date.now,
     log: (line) => console.log(`Demo buyer: ${line}`),
+    signal,
   };
   const result = await runBuyerScenario(scenario, config, dependencies);
   return result.stopReason === "SCENARIO_COMPLETED" ? 0 : 1;
